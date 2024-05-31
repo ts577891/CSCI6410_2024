@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: "practical_2"
 author: "Tsz Kin, Siu"
@@ -575,3 +576,582 @@ specialty_gamma.2 %>%
 
 
 
+=======
+---
+title: "practical_2"
+author: "Tsz Kin, Siu"
+date: "2024-05-27"
+output: html_document
+---
+
+```{r setup}
+#install.packages(c("readr", "dplyr", "tidyr", "ggplot2", "tidtext", "textstem", "clinspacy", "topicmodels", "reshape2"), dependencies = TRUE)
+
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(tidytext)
+library(textstem)
+library(clinspacy)
+library(topicmodels)
+library(reshape2)
+library(stringr)
+```
+
+
+
+## Data Parsing
+
+```{r load_data}
+# load dataset from clinSpaCy
+raw.data <- clinspacy::dataset_mtsamples()
+
+# a fast glimpse on the columns contained in the dataset
+dplyr::glimpse(raw.data)
+
+cat(c("",""), sep="\n\n")
+
+# variable type for each column
+sapply(raw.data, class)
+
+cat(c("",""), sep="\n\n")
+
+# check number of levels in "medical_specialty"
+cat(c("Number of medical specialties = ", raw.data %>% dplyr::select(medical_specialty) %>% dplyr::n_distinct()), sep=" ")
+```
+
+> Q1)  Using the output of dplyr’s glimpse command (or rstudio’s data viewer by clicking on raw.data in the Environment pane) provide a description of what you think each variable in this dataset contains.
+
+
+  ```
+  Based on the manual inspection and the printed outputs above, we can summarise the variables as in the following table.
+  
+  
+  Feature           | Provided Information                                                        | Type                 |
+  ------------------| ----------------------------------------------------------------------------| ---------------------|
+  note_id:          | Unique identifier for each medical note                                     | Integer (identifier) |
+  description:      | Text description about the observed symptoms of the patient                 | Text/String          |
+  medical_sepcialty:| Classified main category or branch of medicine for the diagnosed symptoms   | Factor (nominal)     |
+  sample_name:      | Sub-category stating the specific details of the diagnosed symptoms         | Factor (nominal)     |
+  transcription:    | Full text of the medical notes showing all observations and medical details | Text/String          |
+  keywords:         | Extracted important clinical words or entities related to this visit        | Text/String          |
+  
+  ```
+
+
+```{r transcription_per_specialty, fig.width=10, fig.height=10}
+
+#  number of transcripts are there from each specialty
+ggplot2::ggplot(raw.data, ggplot2::aes(y=medical_specialty)) + ggplot2::geom_bar() + labs(x="Document Count", y="Medical Speciality")
+```
+
+
+```{r filter_data} 
+#  filter specific specialties for analysis
+filtered.data <- raw.data %>% dplyr::filter(medical_specialty %in% c("Orthopedic", "Radiology", "Surgery")) 
+```
+
+
+## Text Processing
+
+
+```{r preprocess_transcriptions}
+
+analysis.data <- filtered.data %>%
+  unnest_tokens(word, transcription) %>%
+  
+  ## remove all numbers
+  mutate(word = str_replace_all(word, "[^[:alnum:]]", "")) %>%
+  filter(!str_detect(word, "[0-9]")) %>%
+  
+  ## remove stop words
+  ##  based on `tidytext::stop_words` and `dplyr::anti_join()`
+  anti_join(stop_words) %>%
+  
+  ## per each note, combine the token as a string, replace the original 'transcription' column
+  group_by(note_id) %>%
+  summarise(transcription = paste(word, collapse = " ")) %>%
+  left_join(select(filtered.data, -transcription), by = "note_id")
+```
+
+```{r tokienize_transcriptions}
+#  uni-gram
+tokenized.data.unigram <- analysis.data %>% tidytext::unnest_tokens(word, transcription, to_lower=TRUE)
+#  bi-gram
+tokenized.data.bigram <- analysis.data %>% tidytext::unnest_tokens(ngram, transcription, token = "ngrams", n=2, to_lower = TRUE)
+```
+
+
+```{r load_stopwords}
+
+#  number of stop words in `tidytext::stop_words`
+tidytext::stop_words %>% dplyr::group_by(lexicon) %>% dplyr::distinct(word) %>% dplyr::summarise(n=dplyr::n())
+```
+
+
+> Q2)  How many unique unigrams are there in the transcripts from each specialty?
+
+
+```{r unigram_per_specialty}
+
+#  number of unique uni-grams in the dataset (stop words and numbers removed in the previous pre-processing step)
+
+tokenized.data.unigram %>% dplyr::group_by(medical_specialty) %>% dplyr::summarise(n_unigrams = n_distinct(word))
+```
+
+
+
+```{r distribution_unigrams}
+
+#  plot some distribution of uni-gram tokens
+
+word_counts <- tokenized.data.unigram %>%
+    group_by(word) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    arrange(desc(count))
+
+count_distribution <- word_counts %>%
+  group_by(count) %>%
+  summarise(num_words = n()) %>%
+  ungroup()
+ 
+ ggplot2::ggplot(count_distribution, aes(x = count, y = num_words)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Count Distribution",
+       x = "Count of Unique Words",
+       y = "Number of Words")
+```
+
+
+```{r distribution_bigrams}
+
+#  plot some distribution of bi-gram tokens
+
+word_counts <- tokenized.data.bigram %>%
+    group_by(ngram) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    arrange(desc(count))
+
+count_distribution <- word_counts %>%
+  group_by(count) %>%
+  summarise(num_words = n()) %>%
+  ungroup()
+ 
+ ggplot2::ggplot(count_distribution, aes(x = count, y = num_words)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Count Distribution",
+       x = "Count of Unique Bigrams",
+       y = "Number of Words")
+```
+
+
+> Q3) How many unique bi-grams are there in each category without stop words and numbers?
+
+
+```{r bigram_per_specialty}
+
+#  number of unique bi-grams in the dataset 
+#  (stop words and numbers removed in the previous pre-processing step)
+
+tokenized.data.bigram %>% dplyr::group_by(medical_specialty) %>% dplyr::summarise(n_bigrams = n_distinct(ngram))
+
+```
+
+
+> Q4) How many unique sentences are there in each category?
+
+
+```{r unique_sentence_per_specialty}
+
+#  get a sentence splitting result
+tokenized.data.senstence = filtered.data %>% 
+  unnest_tokens(output = sentence, transcription, token = "sentences") %>%
+  mutate(sentence = str_replace_all(sentence, "\\d*\\.", ""))
+
+#  number of unique sentences per each specialty
+tokenized.data.senstence %>% dplyr::group_by(medical_specialty) %>% dplyr::summarise(n_sentences = n_distinct(sentence))
+
+```
+
+
+```{r top_5_frequent_bigrams_per_specialty}
+tokenized.data = tokenized.data.bigram
+
+#  get the top 5 frequent bi-grams per specialty
+tokenized.data %>%
+  dplyr::group_by(medical_specialty) %>%
+  dplyr::count(ngram, sort = TRUE) %>%
+  dplyr::top_n(5)
+```
+
+
+> Q5)  Do you think a general purpose lemmatizer will work well for medical data? Why might it not?
+
+
+A general-use lemmatizer is unlikely to work well on medical texts, because of the following two reasons: 
+
+
+1.  General-use lemmatizer is trained on daily and commonly used English words, and may incorrectly normalize medical domain-specific technical terms or unable to detect their roots, as they are almost unseen in laymen texts.
+
+
+2.  The affixation, parts of speech, or any variant form of the base word may convey different semantic meanings that are common and important for medical contexts, one example is "pre-" and "post-".
+
+
+```{r lemmatize}
+
+# apply lemmatizer
+
+lemmatized.data <- tokenized.data %>% dplyr::mutate(lemma=textstem::lemmatize_words(ngram))
+```
+
+
+```{r distribution_lemmatize}
+
+#  calculate the frequency of lemmas within each specialty and note
+##   comparison on "Orthopedic" class
+
+lemma.freq <- lemmatized.data %>% 
+  dplyr::count(medical_specialty, lemma) %>%
+  dplyr::group_by(medical_specialty) %>% 
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  tidyr::pivot_wider(names_from = medical_specialty, values_from = proportion) %>%
+  tidyr::pivot_longer(`Surgery`:`Radiology`,
+               names_to = "medical_specialty", values_to = "proportion")
+```
+
+```{r plot_lemmatize_on_Orthopedic, fig.width=20, fig.height=10}
+
+#  plot the relative proportions
+
+ggplot2::ggplot(lemma.freq, ggplot2::aes(x=proportion, 
+                                         y=`Orthopedic`,
+                                         color=abs(`Orthopedic` - proportion))) + 
+  ggplot2::geom_abline(color="gray40", lty=2) +
+  ggplot2::geom_jitter(alpha=0.1, size=2.5, width=0.3, height=0.3) +
+  ggplot2::geom_text(ggplot2::aes(label=lemma), check_overlap=TRUE, vjust=1.5) +
+  ggplot2::scale_x_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_y_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_color_gradient(limits=c(0, 0.001), low="darkslategray4", high="gray75") +
+  ggplot2::facet_wrap(~medical_specialty, ncol = 2) +
+  ggplot2::theme(legend.position="none") +
+  ggplot2:: labs(y="Orthopedic", x = NULL)
+```
+
+
+> Q6)   What does this plot tell you about the relative similarity of lemma frequencies between Surgery and Orthopedic and between Radiology and Orthopedic? 
+        Based on what these specialties involve, is this what you would expect?
+
+These two plots compare the base-10 log-transformed relative proportion (%) of frequencies for each lemma existing in Orthopedic notes against Surgery and Radiology notes respectively.
+The more the number of terms distributed along the dashed diagonal line suggests a higher similarity of the lemmas used in the notes for both specialties. 
+
+Based on the comparison between Surgery and Orthopedic, the majority of shared lemmas are distributed above the diagonal line. 
+This means surgery-required lemmas in orthopedics take up only a small part of all surgical operations, and most of these are related to fracture and ligament, which is intuitive and easily interpretable. 
+
+For comparison between Radiology and Orthopedic, the majority of shared lemmas are distributed under the diagonal line. 
+This means radiological lemmas are less common than surgical lemmas in orthopedic clinics, and most common situations involve imaging.
+Somehow, it might be a bit out of expectation because imaging seems to be a common tool for inspecting the problems in musculoskeletal structure and monitoring recovery process.
+
+
+
+> Q7)  Modify the above plotting code to do a direct comparison of Surgery and Radiology (i.e., have Surgery or Radiology on the Y-axis and the other 2 specialties as the X facets)
+
+
+```{r plot_lemmatize_on_Surgery, fig.width=20, fig.height=10}
+
+#  calculate the frequency of lemmas within each specialty and note
+##   comparison on "Surgery" class
+
+lemma.freq.2 <- lemmatized.data %>% 
+  dplyr::count(medical_specialty, lemma) %>%
+  dplyr::group_by(medical_specialty) %>% 
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  tidyr::pivot_wider(names_from = medical_specialty, values_from = proportion) %>%
+  tidyr::pivot_longer(`Orthopedic`:`Radiology`,
+                      names_to = "medical_specialty", values_to = "proportion")
+
+ggplot2::ggplot(lemma.freq.2, ggplot2::aes(x=proportion, 
+                                           y=`Surgery`,
+                                           color=abs(`Surgery` - proportion))) + 
+  ggplot2::geom_abline(color="gray40", lty=2) +
+  ggplot2::geom_jitter(alpha=0.1, size=2.5, width=0.3, height=0.3) +
+  ggplot2::geom_text(ggplot2::aes(label=lemma), check_overlap=TRUE, vjust=1.5) +
+  ggplot2::scale_x_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_y_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_color_gradient(limits=c(0, 0.001), low="darkslategray4", high="gray75") +
+  ggplot2::facet_wrap(~medical_specialty, ncol = 2) +
+  ggplot2::theme(legend.position="none") +
+  ggplot2:: labs(y="Surgery", x = NULL)
+```
+
+
+```{r plot_lemmatize_on_Radiology, fig.width=20, fig.height=10}
+
+#  calculate the frequency of lemmas within each specialty and note
+##   comparison on "Radiology" class
+
+lemma.freq.3 <- lemmatized.data %>% 
+  dplyr::count(medical_specialty, lemma) %>%
+  dplyr::group_by(medical_specialty) %>% 
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  tidyr::pivot_wider(names_from = medical_specialty, values_from = proportion) %>%
+  tidyr::pivot_longer(c(`Orthopedic`,`Surgery`),
+                      names_to = "medical_specialty", values_to = "proportion")
+
+ggplot2::ggplot(lemma.freq.3, ggplot2::aes(x=proportion, 
+                                           y=`Radiology`,
+                                           color=abs(`Radiology` - proportion))) + 
+  ggplot2::geom_abline(color="gray40", lty=2) +
+  ggplot2::geom_jitter(alpha=0.1, size=2.5, width=0.3, height=0.3) +
+  ggplot2::geom_text(ggplot2::aes(label=lemma), check_overlap=TRUE, vjust=1.5) +
+  ggplot2::scale_x_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_y_log10(labels=scales::percent_format()) + 
+  ggplot2::scale_color_gradient(limits=c(0, 0.001), low="darkslategray4", high="gray75") +
+  ggplot2::facet_wrap(~medical_specialty, ncol = 2) +
+  ggplot2::theme(legend.position="none") +
+  ggplot2:: labs(y="Radiology", x = NULL)
+```
+
+
+### TF-IDF Normalisation
+
+
+```{r counts}
+
+##  obtain counts of terms
+
+lemma.counts <- lemmatized.data %>% dplyr::count(medical_specialty, lemma)
+total.counts <- lemma.counts %>% 
+                      dplyr::group_by(medical_specialty) %>% 
+                      dplyr::summarise(total=sum(n))
+
+all.counts <- dplyr::left_join(lemma.counts, total.counts)
+```
+
+
+```{r tf_idf_computation}
+
+##  calculate the term frequency / invariant document frequency (tf-idf)
+
+all.counts.tfidf <- tidytext::bind_tf_idf(all.counts, lemma, medical_specialty, n) 
+```
+
+
+```{r top_10_lemmas}
+
+##  print top 10 lemma by tf-idf within each specialty
+
+all.counts.tfidf %>% dplyr::group_by(medical_specialty) %>% dplyr::slice_max(order_by=tf_idf, n=10)
+```
+
+
+> Q8)  Are there any lemmas that stand out in these lists? Why or why not?
+
+Generally, there is no common lemma that particularly has a significantly higher TF-IDF score than other lemmas in all 3 specialties, because the list of top lemmas in Radiology is quite different from the remaining two specialties.
+For Surgery and Orthopedics, "steri strips" and "closed vicryl" appear among the top 10 lemmas for both categories, as well as some bi-grams containing the word "anesthesia".  
+
+These words are common tools or techniques that will be adopted when doing a surgery, involving those orthopedic-related surgery operations. 
+From below, each of the two terms appear in around 200 transcriptions, and commonly mentioned in 60 notes.
+
+
+```{r detect_lemmas_raw_transcriptions_shared}
+
+##  Extract the full transcriptions from notes containing both terms "steri strips" and "closed vicryl"
+
+a = analysis.data %>% dplyr::select(medical_specialty, transcription) %>% dplyr::filter(stringr::str_detect(transcription, 'steri strips'))
+b = analysis.data %>% dplyr::select(medical_specialty, transcription) %>% dplyr::filter(stringr::str_detect(transcription, 'closed vicryl')) 
+
+print(dim(a)[1])
+print(dim(b)[1])
+print(dim(subset(a, transcription %in% b$transcription))[1])
+```
+
+
+
+
+```{r detect_lemmas_raw_transcriptions_1}
+
+##  Extract 1 example of the full transcriptions from notes containing the term "steri strips"
+
+analysis.data %>% dplyr::select(medical_specialty, transcription) %>% dplyr::filter(stringr::str_detect(transcription, 'steri strips'))  %>% dplyr::slice(1)
+```
+
+> Q9)  Extract an example of one of the other “top lemmas” by modifying the above code.
+
+
+```{r detect_lemmas_raw_transcriptions_2}
+
+##  Extract 1 example of the full transcriptions from notes containing the term "closed vicryl"
+
+analysis.data %>% dplyr::select(medical_specialty, transcription) %>% dplyr::filter(stringr::str_detect(transcription, 'closed vicryl'))  %>% dplyr::slice(1)
+```
+
+
+
+## Topic Modelling
+
+
+First lets calculate a term frequency matrix for each transcription:
+
+```{r doc_term_freq_matrix}
+
+lemma.counts <- lemmatized.data %>% dplyr::count(note_id, lemma)
+total.counts <- lemma.counts %>% 
+                      dplyr::group_by(note_id) %>% 
+                      dplyr::summarise(total=sum(n))
+
+all.counts <- dplyr::left_join(lemma.counts, total.counts)
+
+emr.dcm <- all.counts %>% tidytext::cast_dtm(note_id, lemma, n)
+```
+
+Then we can use LDA function to fit a 5 topic (`k=5`) LDA-model:
+
+```{r lda_topic_model}
+emr.lda <- topicmodels::LDA(emr.dcm, k=5, control=list(seed=42))
+emr.topics <- tidytext::tidy(emr.lda, matrix='beta')
+```
+
+
+Then we can extract the top terms per assigned topic:
+
+```{r top_tokens_per_topic, fig.width = 10, fig.height = 8}
+
+top.terms <- emr.topics %>% dplyr::group_by(topic) %>% 
+  dplyr::slice_max(beta, n=10) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(topic, -beta)
+
+
+top.terms %>% 
+  dplyr::mutate(term=tidytext::reorder_within(term, beta, topic)) %>% 
+  ggplot2::ggplot(ggplot2::aes(beta, term, fill=factor(topic))) + 
+    ggplot2::geom_col(show.legend=FALSE) + 
+    ggplot2::facet_wrap(~ topic, scales='free')  +
+    ggplot2::theme(axis.text.x = element_text(angle = 45,vjust = 1,hjust = 1)) +
+    tidytext::scale_y_reordered()
+```
+
+```{r dominant_topic_per_specialty, fig.width = 15, fig.height = 9}
+specialty_gamma <- tidytext::tidy(emr.lda, matrix='gamma')
+
+# we need to join in the specialty from the note_id
+note_id_specialty_mapping <- lemmatized.data %>%
+  dplyr::mutate(document=as.character(note_id)) %>% 
+  dplyr::select(document, medical_specialty) %>% 
+  dplyr::distinct()
+
+specialty_gamma <- dplyr::left_join(specialty_gamma, note_id_specialty_mapping)
+
+specialty_gamma %>%
+  dplyr::mutate(medical_specialty = reorder(medical_specialty, gamma * topic)) %>%
+  ggplot2::ggplot(ggplot2::aes(factor(topic), gamma)) +
+  ggplot2::geom_boxplot() +
+  ggplot2::facet_wrap(~ medical_specialty) +
+  ggplot2::labs(x = "topic", y = expression(gamma))
+```
+
+
+
+> Q10)  Repeat this with a 6 topic LDA, do the top terms from the 5 topic LDA still turn up? How do the specialties get split into sub-topics?
+
+
+Comparing the 6-topic LDA model and the 5-topic LDA model:
+
+
+a)  The 1st and 3rd topics of both LDA models are basically the same, just the rankings of the top 10 terms have some differences;
+
+
+b)  The 2nd and 4th topics of both LDA models should be relevant, but some new terms enter the top 10 for the 6-topic LDA model,
+    for example, "proximal phalanx", "ankle tourniquet", "metatarsal head" for the 2nd topic, 
+    as well as "central canal", "lower extremity" for the 4th topic.
+    
+    This shows the 6-topic LDA model can capture more specific themes or entities for these two topics, while the 5-topic LDA model repeats some high-frequency terms that also appear in other topics, like "toleratedd procedure", "patient tolerated".
+    
+    
+c)  The 5th topic in both models are similar, just the 6-topic LDA model identifies "vicryl suture" that is missing in the 5-topic LDA model.
+
+
+d)  The new 6th topic is left body related, with terms like "left main" and "left anterior" regrouped to this topic.
+
+
+There is a great change in the topic distribution of each specialty. 
+In the 5-topic LDA model, each specialty has a dominant topic (Orthopedics: topic 2, Surgery: topic 3, Radiology: topic 4).
+However, in the 6-topic LDA model, Orthopedics and Surgery do not show a dependence on a particular topic. While topic 4 is still the major topic for Radiology, its sub-topic changes from topic 1 to the newly formed topic 6.
+
+
+This observation may be due to the algorithm of LDA, because LDA is a probabilistic model that each note is assumed to be containing a mixture of topics (document-topic distribution) and a topic is made of a mixture of terms (topic-term distribution).
+The probabilistic distribution is guided by the inputted TF-IDF frequency matrix. Some frequent terms appearing in a majority of notes of the three specialties will have a higher probability of being drawn, which explains why they are top-ranked in each topic. 
+When all topics have some extent of similarities, the document overall will tend to have a relatively equal distribution of topics. 
+
+
+Adding 1 topic may have increased the complexity and perplexity of the model. Although some topics (e.g., 2nd and 4th) become more specific, the topic probabilities for each note may become less variant.
+Upon aggregation by the three specialties, the topic contribution becomes more even.
+
+
+
+
+![](C:/Users/kin02/OneDrive/Desktop/Dalhousie/CSCI 6410/Practicals/Practical 2/Schematic-of-LDA-algorithm.png)  
+
+
+
+
+D. Buenaño-Fernandez, M. González, D. Gil and S. Luján-Mora, (2020). "Text Mining of Open-Ended Questions in Self-Assessment of University Teachers: An LDA Topic Modeling Approach," in *IEEE Access*, vol. 8, pp. 35318-35330, doi: 10.1109/ACCESS.2020.2974983.
+
+
+
+
+
+Redo LDA function to fit a 6 topic LDA-model:
+
+```{r lda_topic_model_2}
+emr.lda.2 <- topicmodels::LDA(emr.dcm, k=6, control=list(seed=42))
+emr.topics.2 <- tidytext::tidy(emr.lda.2, matrix='beta')
+```
+
+
+Extract the top terms per assigned topic:
+
+```{r top_tokens_per_topic_2, fig.width = 10, fig.height = 8}
+
+top.terms.2 <- emr.topics.2 %>% dplyr::group_by(topic) %>% 
+  dplyr::slice_max(beta, n=10) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(topic, -beta)
+
+
+top.terms.2 %>% 
+  dplyr::mutate(term=tidytext::reorder_within(term, beta, topic)) %>% 
+  ggplot2::ggplot(ggplot2::aes(beta, term, fill=factor(topic))) + 
+    ggplot2::geom_col(show.legend=FALSE) + 
+    ggplot2::facet_wrap(~ topic, scales='free')  +
+    ggplot2::theme(axis.text.x = element_text(angle = 45,vjust = 1,hjust = 1)) +
+    tidytext::scale_y_reordered()
+```
+
+```{r dominant_topic_per_specialty_2, fig.width = 15, fig.height = 9}
+specialty_gamma.2 <- tidytext::tidy(emr.lda.2, matrix='gamma')
+
+# we need to join in the specialty from the note_id
+note_id_specialty_mapping.2 <- lemmatized.data %>%
+  dplyr::mutate(document=as.character(note_id)) %>% 
+  dplyr::select(document, medical_specialty) %>% 
+  dplyr::distinct()
+
+specialty_gamma.2 <- dplyr::left_join(specialty_gamma.2, note_id_specialty_mapping.2)
+
+specialty_gamma.2 %>%
+  dplyr::mutate(medical_specialty = reorder(medical_specialty, gamma * topic)) %>%
+  ggplot2::ggplot(ggplot2::aes(factor(topic), gamma)) +
+  ggplot2::geom_boxplot() +
+  ggplot2::facet_wrap(~ medical_specialty) +
+  ggplot2::labs(x = "topic", y = expression(gamma))
+```
+
+
+
+>>>>>>> 9f96bfb281b737e089ba40b7464dd65f95c7bb64

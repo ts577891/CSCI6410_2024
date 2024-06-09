@@ -1,0 +1,13 @@
+ggplot2
+gridExtra
+magrittr
+imager
+jpeg
+magick
+EBImage
+dplyr
+abind
+stringr
+torch
+torchvision
+luz
